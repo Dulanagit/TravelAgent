@@ -18,7 +18,11 @@ class TravelState(TypedDict):
     constraints: TravelConstraints
     is_complete: bool
     missing_fields: List[str]
-    mock_hotels: List[Dict[str, Any]]
+    real_hotels: List[Dict[str, Any]]
+    weather_data: Dict[str, Any]
+    news_context: str
+    activities: List[Dict[str, Any]]
     top_hotels: List[Dict[str, Any]]
+    itinerary: List[Dict[str, Any]]
     user_approved: bool
     booking_confirmation: Optional[str]

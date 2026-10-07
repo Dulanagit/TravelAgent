@@ -1,17 +1,30 @@
 from langgraph.graph import StateGraph, END
 from state import TravelState, TravelConstraints
 import uuid
+from api_integrations import (
+    get_sri_lanka_weather,
+    get_current_news,
+    search_hotels,
+    get_places_to_visit
+)
+from scoring_config import SCORING_WEIGHTS, SEARCH_CONSTRAINTS
 
 def extract_node(state: TravelState) -> TravelState:
-    """Extraction Node: Parse constraints into strict JSON (mocked)"""
+    """Extraction Node: Parse constraints into strict JSON"""
     constraints = state.get("constraints")
     if not constraints:
         constraints = TravelConstraints()
     
     missing = []
+    
+    # Enforce Sri Lanka constraint
+    country_limit = SEARCH_CONSTRAINTS.get("country_limit", "Sri Lanka")
+    
     if not constraints.destination:
-        if "paris" in state.get("query", "").lower():
-            constraints.destination = "Paris"
+        if "colombo" in state.get("query", "").lower():
+            constraints.destination = "Colombo"
+        elif "kandy" in state.get("query", "").lower():
+            constraints.destination = "Kandy"
         else:
             missing.append("destination")
     
@@ -38,11 +51,11 @@ def ask_node(state: TravelState) -> TravelState:
     
     # Mock user input filling missing fields
     if "destination" in missing:
-        constraints.destination = "Paris"
+        constraints.destination = "Colombo"
     if "start_date" in missing:
-        constraints.start_date = "2024-05-01"
+        constraints.start_date = "2026-11-01"
     if "end_date" in missing:
-        constraints.end_date = "2024-05-10"
+        constraints.end_date = "2026-11-10"
     if "budget" in missing:
         constraints.budget = 2000.0
         
@@ -57,41 +70,102 @@ def check_constraints(state: TravelState) -> str:
         return "yes"
     return "no"
 
+def environmental_awareness_node(state: TravelState) -> TravelState:
+    """Fetches real-time weather and news."""
+    print(f"\n[Environmental Node] Fetching real-time weather and news for Sri Lanka...")
+    city = state["constraints"].destination
+    weather = get_sri_lanka_weather(city)
+    news = get_current_news("Sri Lanka political economic situation")
+    
+    return {
+        **state,
+        "weather_data": weather,
+        "news_context": news
+    }
+
 def api_execution_node(state: TravelState) -> TravelState:
-    """API Execution Node: Fetch mock hotel data"""
-    mock_hotels = [
-        {"name": "Le Meurice", "price_per_night": 500, "rating": 4.8},
-        {"name": "Ritz Paris", "price_per_night": 800, "rating": 4.9},
-        {"name": "Ibis Styles", "price_per_night": 100, "rating": 4.0},
-        {"name": "Novotel", "price_per_night": 150, "rating": 4.2}
-    ]
-    return {**state, "mock_hotels": mock_hotels}
+    """API Execution Node: Fetch real hotels and activities"""
+    print(f"\n[API Node] Fetching real hotels and activities...")
+    city = state["constraints"].destination
+    start_date = state["constraints"].start_date
+    end_date = state["constraints"].end_date
+    budget = state["constraints"].budget
+    
+    hotels = search_hotels(city, start_date, end_date, budget)
+    activities = get_places_to_visit(city, "sightseeing food")
+    
+    return {
+        **state, 
+        "real_hotels": hotels,
+        "activities": activities
+    }
 
 def evaluator_agent_node(state: TravelState) -> TravelState:
-    """Evaluator Agent: Score hotels and filter to Top 2"""
-    hotels = state.get("mock_hotels", [])
+    """Evaluator Agent: Score hotels and activities using config"""
+    print(f"\n[Evaluator Node] Scoring based on config and real-world data...")
+    hotels = state.get("real_hotels", [])
+    activities = state.get("activities", [])
     budget = state.get("constraints").budget if state.get("constraints") else 1000
+    weather = state.get("weather_data", {})
     
+    # Evaluate Hotels
+    hotel_weights = SCORING_WEIGHTS["hotel"]
     scored_hotels = []
     for h in hotels:
-        # Simple evaluation logic: score = rating - cost penalty
-        est_cost = h["price_per_night"] * 9 # Assuming 9 nights stay
-        score = h["rating"] * 10
+        # Simple evaluation logic using config
+        est_cost = h["price_per_night"] * 9 # Mock stay length
+        score = h["rating"] * hotel_weights["rating_weight"]
         if est_cost > budget:
-            score -= 20 # Penalty for exceeding budget
+            overage = est_cost - budget
+            score -= (overage * hotel_weights["budget_penalty_per_dollar"])
         h["score"] = score
         scored_hotels.append(h)
         
     scored_hotels.sort(key=lambda x: x["score"], reverse=True)
-    top_2 = scored_hotels[:2]
+    top_2_hotels = scored_hotels[:2]
     
-    return {**state, "top_hotels": top_2}
+    # Evaluate Activities (apply weather penalty)
+    weather_weights = SCORING_WEIGHTS["weather"]
+    scored_activities = []
+    for a in activities:
+        score = 100 # Base score
+        if weather.get("is_raining") and a.get("type") == "Sightseeing":
+            score += weather_weights["rain_penalty"]
+            print(f"  -> Applying rain penalty to {a['name']}")
+        a["score"] = score
+        scored_activities.append(a)
+    
+    scored_activities.sort(key=lambda x: x["score"], reverse=True)
+    
+    # Build Itinerary
+    itinerary = []
+    if top_2_hotels:
+        itinerary.append({"day": "1-9", "type": "Accommodation", "details": top_2_hotels[0]})
+    
+    max_activities = SEARCH_CONSTRAINTS["max_activities_per_day"]
+    for i, a in enumerate(scored_activities[:max_activities]):
+        itinerary.append({"day": "1", "type": "Activity", "details": a})
+        
+    return {
+        **state, 
+        "top_hotels": top_2_hotels,
+        "itinerary": itinerary
+    }
 
 def hitl_node(state: TravelState) -> TravelState:
     """Human-in-the-Loop Checkpoint"""
-    print(f"\n[HITL Node] Checkpoint. Top hotels presented to user:")
-    for h in state.get('top_hotels', []):
-        print(f"  - {h['name']} (${h['price_per_night']}/night, Score: {h['score']})")
+    print(f"\n[HITL Node] Checkpoint. Proposed Itinerary:")
+    for item in state.get('itinerary', []):
+        if item["type"] == "Accommodation":
+            h = item["details"]
+            print(f"  - STAY: {h['name']} (${h['price_per_night']}/night, Score: {h.get('score')})")
+        else:
+            a = item["details"]
+            print(f"  - DO:   {a['name']} (Score: {a.get('score')})")
+            
+    print("\nWeather Alert:")
+    weather = state.get("weather_data", {})
+    print(f"  - Temp: {weather.get('temperature')}C, Raining: {weather.get('is_raining')}")
     
     # Note: user_approved is set in initial state for simulation
     return state
@@ -115,6 +189,7 @@ workflow = StateGraph(TravelState)
 # Add nodes
 workflow.add_node("extract", extract_node)
 workflow.add_node("ask", ask_node)
+workflow.add_node("env_awareness", environmental_awareness_node)
 workflow.add_node("api", api_execution_node)
 workflow.add_node("evaluator", evaluator_agent_node)
 workflow.add_node("hitl", hitl_node)
@@ -128,11 +203,12 @@ workflow.add_conditional_edges(
     "extract",
     check_constraints,
     {
-        "yes": "api",
+        "yes": "env_awareness",
         "no": "ask"
     }
 )
 workflow.add_edge("ask", "extract")
+workflow.add_edge("env_awareness", "api")
 workflow.add_edge("api", "evaluator")
 workflow.add_edge("evaluator", "hitl")
 

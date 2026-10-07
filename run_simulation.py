@@ -25,12 +25,16 @@ def run_simulation():
     # Mock user query that only has partial information
     # Missing start_date, end_date, and budget
     initial_state = {
-        "query": "I want to go to Paris.",
+        "query": "I want to go to Colombo.",
         "constraints": TravelConstraints(destination=None, start_date=None, end_date=None, budget=None),
         "is_complete": False,
         "missing_fields": [],
-        "mock_hotels": [],
+        "real_hotels": [],
+        "weather_data": {},
+        "news_context": "",
+        "activities": [],
         "top_hotels": [],
+        "itinerary": [],
         "user_approved": True,  # Mocking that the user will approve the hotels in HITL
         "booking_confirmation": None
     }
