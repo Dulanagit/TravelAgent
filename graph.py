@@ -160,17 +160,27 @@ def evaluator_agent_node(state: TravelState) -> dict:
     
     max_activities = SEARCH_CONSTRAINTS["max_activities_per_day"]
     
-    prompt = f"""You are an expert travel planner. 
-Based on the following real-world activities, create a logical step-by-step day-by-day sequence for the user.
-Constraints: {state.get('constraints')}
+    constraints = state.get('constraints')
+    transport = getattr(constraints, 'transport_mode', 'public transport') if constraints else 'public transport'
+    
+    prompt = f"""You are an elite, highly rational travel planner for Sri Lanka.
+Your job is to take the provided activities and construct a realistic, step-by-step itinerary.
+
+User Constraints: {constraints}
 Available Activities: {scored_activities}
 
-Output your plan strictly as a JSON array of objects with this structure:
+CRITICAL RULES:
+1. Determine the trip duration based on start_date and end_date. Create an itinerary spanning exactly that many days (e.g., Day 1, Day 2, Day 3).
+2. TRAVEL TIME: On Day 1, the first activity MUST be "Travel to Destination" using the user's preferred transport mode ({transport}). Follow this with "Hotel Check-in".
+3. RETURN TRAVEL: On the final day, the last activity MUST be "Hotel Check-out & Return Travel".
+4. NO REPETITION: Do NOT repeat the same activity twice on different days. Once an activity is used, it is done.
+5. PACING: Space activities logically (Morning, Afternoon, Evening). Do not pack 5 activities into one afternoon. 
+
+Output your plan strictly as a JSON array of objects with this structure (and absolutely no markdown formatting):
 [
-  {{"day": "Day 1", "type": "Morning Activity", "details": {{"name": "...", "price_per_night": 0, "link": "..."}}}},
+  {{"day": "Day 1 (Date if known)", "type": "Travel", "details": {{"name": "Train to destination", "price_per_night": 0, "link": ""}}}},
   {{"day": "Day 1", "type": "Afternoon Activity", "details": {{"name": "...", "price_per_night": 0, "link": "..."}}}}
 ]
-Ensure you use the provided activities. Do not include markdown formatting in your output, just the raw JSON array.
 """
     
     try:
