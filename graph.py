@@ -71,12 +71,26 @@ Once you have ALL constraints AND you have checked the weather, and the user is 
     return {"messages": [response]}
 
 def parse_constraints(messages: list) -> TravelConstraints:
-    """A helper to parse constraints from the conversation history using a structured output."""
-    # We use a structured output LLM to extract constraints from the chat history
-    structured_llm = llm.with_structured_output(TravelConstraints)
-    sys_msg = SystemMessage(content="Extract the travel constraints from the conversation. If a constraint is not explicitly stated, leave it null/None.")
-    constraints = structured_llm.invoke([sys_msg] + messages)
-    return constraints
+    """A helper to parse constraints from the conversation history using raw JSON output."""
+    sys_msg = SystemMessage(content='''Extract the travel constraints from the conversation. 
+Return ONLY a valid JSON object with the following keys exactly:
+- destination (string or null)
+- start_date (string or null)
+- end_date (string or null)
+- budget (number or null)
+- companions (string or null)
+- vibe (string or null)
+- transport_mode (string or null)
+Do not include any markdown formatting. If a constraint is not explicitly stated, leave it null.''')
+    
+    response = llm.invoke([sys_msg] + messages)
+    try:
+        json_str = response.content.strip().strip('```json').strip('```')
+        data = json.loads(json_str)
+        return TravelConstraints(**data)
+    except Exception as e:
+        print(f"Failed to parse constraints JSON: {e}")
+        return TravelConstraints()
 
 def planner_node(state: TravelState) -> dict:
     """Planner Agent: Uses constraints to build an itinerary."""
@@ -145,8 +159,31 @@ def evaluator_agent_node(state: TravelState) -> dict:
         itinerary.append({"day": "Accommodation Option", "type": f"Option {i+1}", "details": hotel})
     
     max_activities = SEARCH_CONSTRAINTS["max_activities_per_day"]
-    for i, a in enumerate(scored_activities[:max_activities]):
-        itinerary.append({"day": "Activity Option", "type": a.get("type", "Activity"), "details": a})
+    
+    prompt = f"""You are an expert travel planner. 
+Based on the following real-world activities, create a logical step-by-step day-by-day sequence for the user.
+Constraints: {state.get('constraints')}
+Available Activities: {scored_activities}
+
+Output your plan strictly as a JSON array of objects with this structure:
+[
+  {{"day": "Day 1", "type": "Morning Activity", "details": {{"name": "...", "price_per_night": 0, "link": "..."}}}},
+  {{"day": "Day 1", "type": "Afternoon Activity", "details": {{"name": "...", "price_per_night": 0, "link": "..."}}}}
+]
+Ensure you use the provided activities. Do not include markdown formatting in your output, just the raw JSON array.
+"""
+    
+    try:
+        response = planner_llm.invoke(prompt)
+        # Strip potential markdown blocks (```json ... ```)
+        json_str = response.content.strip().strip('```json').strip('```')
+        planned_activities = json.loads(json_str)
+        itinerary.extend(planned_activities)
+    except Exception as e:
+        print(f"Failed to parse LLM itinerary JSON: {e}")
+        # Fallback to simple listing if LLM fails
+        for i, a in enumerate(scored_activities[:max_activities]):
+            itinerary.append({"day": "Suggested Activity", "type": a.get("type", "Activity"), "details": a})
         
     return {
         "top_hotels": top_3_hotels,

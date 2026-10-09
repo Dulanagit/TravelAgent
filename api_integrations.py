@@ -85,8 +85,8 @@ def search_hotels(city: str, start_date: str, end_date: str, budget: float) -> t
     api_key = os.environ.get("RAPIDAPI_KEY")
 
     if not api_key:
-        print("RAPIDAPI_KEY missing, trying web search directly.")
-        return search_hotels_web(city)
+        print("RAPIDAPI_KEY missing, trying Google API directly.")
+        return search_hotels_google(city)
         
     headers = {
         "X-RapidAPI-Key": api_key,
@@ -160,34 +160,42 @@ def search_hotels(city: str, start_date: str, end_date: str, budget: float) -> t
         return hotels, ""
         
     except Exception as e:
-        error_msg = f"RapidAPI Error: {e}. Falling back to Web Search..."
+        error_msg = f"RapidAPI Error: {e}. Falling back to Google API..."
         print(error_msg)
-        return search_hotels_web(city)
+        return search_hotels_google(city)
 
-def search_hotels_web(city: str) -> tuple[List[Dict[str, Any]], str]:
-    """Fallback to DuckDuckGo Search to find real hotels without API keys."""
-    from duckduckgo_search import DDGS
-    ddgs = DDGS()
+def search_hotels_google(city: str) -> tuple[List[Dict[str, Any]], str]:
+    """Fallback to Google Places API to find hotels."""
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        return [], "Both RapidAPI and Google API failed (GOOGLE_API_KEY missing in .env)."
+        
+    url = "https://places.googleapis.com/v1/places:searchText"
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": api_key,
+        "X-Goog-FieldMask": "places.displayName,places.rating,places.priceLevel,places.googleMapsUri"
+    }
+    payload = {"textQuery": f"best hotels in {city}"}
     
     try:
-        search_query = f"site:booking.com OR site:tripadvisor.com best hotels in {city}"
-        results = ddgs.text(search_query, max_results=5)
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        response.raise_for_status()
+        places = response.json().get("places", [])
         
         hotels = []
-        for r in results:
-            title = r.get('title', '').replace(' | Booking.com', '').replace(' - TripAdvisor', '')
+        for p in places[:5]:
             hotels.append({
-                "name": title[:50] + "..." if len(title) > 50 else title,
-                "price_per_night": 0, # Web search doesn't easily expose exact prices without scraping
-                "rating": 4.0, # Placeholder rating for top search results
-                "link": r.get('href', '')
+                "name": p.get("displayName", {}).get("text", "Unknown Hotel"),
+                "price_per_night": 0, # Google API doesn't provide exact nightly rates easily, we'll use priceLevel later
+                "rating": p.get("rating", 0),
+                "link": p.get("googleMapsUri", "")
             })
-            
         if not hotels:
-            return [], "Web search returned no hotels."
+            return [], "Google API returned no hotels."
         return hotels, ""
     except Exception as e:
-        return [], f"Web Search Fallback Error: {e}"
+        return [], f"Google API Fallback Error: {e}"
 
 def get_places_to_visit(city: str, preferences: str) -> List[Dict[str, Any]]:
     """Uses DuckDuckGo search to find trending spots and reads the website content."""
