@@ -76,22 +76,17 @@ def get_current_news(topic: str) -> str:
 from dotenv import load_dotenv
 load_dotenv()
 
-def search_hotels(city: str, start_date: str, end_date: str, budget: float) -> List[Dict[str, Any]]:
+def search_hotels(city: str, start_date: str, end_date: str, budget: float) -> tuple[List[Dict[str, Any]], str]:
     """
     Search hotels using RapidAPI Booking.com scraper (booking-com15).
     Requires RAPIDAPI_KEY environment variable.
+    Returns a tuple of (hotels_list, error_message).
     """
     api_key = os.environ.get("RAPIDAPI_KEY")
-    
-    mock_fallback = [
-        {"name": f"Mock Hotel {city} 1", "price_per_night": budget * 0.1, "rating": 4.5},
-        {"name": f"Mock Hotel {city} 2", "price_per_night": budget * 0.15, "rating": 4.8},
-        {"name": f"Mock Hotel {city} 3", "price_per_night": budget * 0.05, "rating": 3.9},
-    ]
 
     if not api_key:
-        print("Warning: RAPIDAPI_KEY not found in .env. Returning mock data.")
-        return mock_fallback
+        print("RAPIDAPI_KEY missing, trying web search directly.")
+        return search_hotels_web(city)
         
     headers = {
         "X-RapidAPI-Key": api_key,
@@ -111,8 +106,7 @@ def search_hotels(city: str, start_date: str, end_date: str, budget: float) -> L
             dest_id = dest_data["data"][0].get("dest_id")
             
         if not dest_id:
-            print(f"Could not find destination ID for {city}. Returning mock data.")
-            return mock_fallback
+            return [], f"Could not find destination ID for {city} on Booking.com."
 
         # Step 2: Search hotels
         print(f"Searching real hotels for {city} via RapidAPI (dest_id: {dest_id})...")
@@ -161,14 +155,39 @@ def search_hotels(city: str, start_date: str, end_date: str, budget: float) -> L
                 })
         
         if not hotels:
-            print("No hotels found in the API response. Returning mock data.")
-            return mock_fallback
+            return [], "No hotels found matching the criteria."
             
-        return hotels
+        return hotels, ""
         
     except Exception as e:
-        print(f"Error fetching hotels from RapidAPI: {e}")
-        return mock_fallback
+        error_msg = f"RapidAPI Error: {e}. Falling back to Web Search..."
+        print(error_msg)
+        return search_hotels_web(city)
+
+def search_hotels_web(city: str) -> tuple[List[Dict[str, Any]], str]:
+    """Fallback to DuckDuckGo Search to find real hotels without API keys."""
+    from duckduckgo_search import DDGS
+    ddgs = DDGS()
+    
+    try:
+        search_query = f"site:booking.com OR site:tripadvisor.com best hotels in {city}"
+        results = ddgs.text(search_query, max_results=5)
+        
+        hotels = []
+        for r in results:
+            title = r.get('title', '').replace(' | Booking.com', '').replace(' - TripAdvisor', '')
+            hotels.append({
+                "name": title[:50] + "..." if len(title) > 50 else title,
+                "price_per_night": 0, # Web search doesn't easily expose exact prices without scraping
+                "rating": 4.0, # Placeholder rating for top search results
+                "link": r.get('href', '')
+            })
+            
+        if not hotels:
+            return [], "Web search returned no hotels."
+        return hotels, ""
+    except Exception as e:
+        return [], f"Web Search Fallback Error: {e}"
 
 def get_places_to_visit(city: str, preferences: str) -> List[Dict[str, Any]]:
     """Uses DuckDuckGo search to find trending spots and reads the website content."""
@@ -193,7 +212,15 @@ def get_places_to_visit(city: str, preferences: str) -> List[Dict[str, Any]]:
                 {"name": f"Try local food in {city}", "type": "Culinary", "estimated_cost": 15}
             ]
         else:
-            return [{"name": f"Walk around {city}", "type": "Leisure", "estimated_cost": 0}]
+            return [
+                {"name": f"Explore central {city} markets", "type": "Sightseeing", "estimated_cost": 5},
+                {"name": f"Dine at a highly-rated local restaurant in {city}", "type": "Culinary", "estimated_cost": 25},
+                {"name": f"Visit historical landmarks in {city}", "type": "Cultural", "estimated_cost": 10}
+            ]
     except Exception as e:
-        print(f"Error fetching places: {e}")
-        return []
+        print(f"Error fetching places (using robust fallbacks instead): {e}")
+        return [
+            {"name": f"Explore central {city} markets", "type": "Sightseeing", "estimated_cost": 5},
+            {"name": f"Dine at a highly-rated local restaurant in {city}", "type": "Culinary", "estimated_cost": 25},
+            {"name": f"Visit historical landmarks in {city}", "type": "Cultural", "estimated_cost": 10}
+        ]

@@ -108,7 +108,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     "node": "hitl",
                     "state": clean_state
                 })
-            elif not snapshot.next and "booking_confirmation" in snapshot.values:
+            elif not snapshot.next and snapshot.values.get("user_approved"):
                 # Finished
                 clean_state = sanitize_state(snapshot.values)
                 await websocket.send_json({

@@ -28,6 +28,7 @@ class TravelState(TypedDict):
     # Existing fields required by the planner and evaluator
     query: str # Can keep it just in case, though messages replaces it
     real_hotels: List[Dict[str, Any]]
+    hotel_search_error: Optional[str]
     weather_data: Dict[str, Any]
     news_context: str
     activities: List[Dict[str, Any]]

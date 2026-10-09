@@ -94,13 +94,14 @@ def planner_node(state: TravelState) -> dict:
     budget = constraints.budget or 1000.0
     vibe = constraints.vibe or "sightseeing"
     
-    hotels = search_hotels(city, start_date, end_date, budget)
+    hotels, hotel_err = search_hotels(city, start_date, end_date, budget)
     activities = get_places_to_visit(city, vibe)
     weather = get_sri_lanka_weather(city)
     
     return {
         "constraints": constraints,
         "real_hotels": hotels,
+        "hotel_search_error": hotel_err,
         "activities": activities,
         "weather_data": weather,
         "phase": "planning"
@@ -126,7 +127,7 @@ def evaluator_agent_node(state: TravelState) -> dict:
         scored_hotels.append(h)
         
     scored_hotels.sort(key=lambda x: x["score"], reverse=True)
-    top_2_hotels = scored_hotels[:2]
+    top_3_hotels = scored_hotels[:3]
     
     weather_weights = SCORING_WEIGHTS["weather"]
     scored_activities = []
@@ -140,15 +141,15 @@ def evaluator_agent_node(state: TravelState) -> dict:
     scored_activities.sort(key=lambda x: x["score"], reverse=True)
     
     itinerary = []
-    if top_2_hotels:
-        itinerary.append({"day": "Whole Trip", "type": "Accommodation", "details": top_2_hotels[0]})
+    for i, hotel in enumerate(top_3_hotels):
+        itinerary.append({"day": "Accommodation Option", "type": f"Option {i+1}", "details": hotel})
     
     max_activities = SEARCH_CONSTRAINTS["max_activities_per_day"]
     for i, a in enumerate(scored_activities[:max_activities]):
-        itinerary.append({"day": f"Day {i+1}", "type": "Activity", "details": a})
+        itinerary.append({"day": "Activity Option", "type": a.get("type", "Activity"), "details": a})
         
     return {
-        "top_hotels": top_2_hotels,
+        "top_hotels": top_3_hotels,
         "itinerary": itinerary,
         "phase": "review"
     }
@@ -158,14 +159,7 @@ def hitl_node(state: TravelState) -> dict:
     print(f"\n[HITL Node] Presenting proposed itinerary for approval...")
     return state
 
-def booking_node(state: TravelState) -> dict:
-    """Booking Node: Finalize"""
-    import uuid
-    print(f"\n[Booking Node] Finalizing bookings...")
-    return {
-        "booking_confirmation": f"CONFIRMATION-{uuid.uuid4().hex[:8].upper()}",
-        "phase": "booking"
-    }
+# Removed booking_node as per user request
 
 # --- Routing ---
 
@@ -183,10 +177,10 @@ def route_chatbot(state: TravelState) -> Literal["tools", "planner", "__end__"]:
     # Otherwise, we wait for the user to reply
     return "__end__"
 
-def route_hitl(state: TravelState) -> Literal["booking", "planner"]:
+def route_hitl(state: TravelState) -> Literal["__end__", "planner"]:
     """User Decision on Itinerary"""
     if state.get("user_approved", True):
-        return "booking"
+        return "__end__"
     return "planner"
 
 # --- Workflow Initialization ---
@@ -197,7 +191,7 @@ workflow.add_node("tools", tool_node)
 workflow.add_node("planner", planner_node)
 workflow.add_node("evaluator", evaluator_agent_node)
 workflow.add_node("hitl", hitl_node)
-workflow.add_node("booking", booking_node)
+# booking node removed
 
 workflow.set_entry_point("chatbot")
 
@@ -206,7 +200,6 @@ workflow.add_edge("tools", "chatbot")
 workflow.add_edge("planner", "evaluator")
 workflow.add_edge("evaluator", "hitl")
 workflow.add_conditional_edges("hitl", route_hitl)
-workflow.add_edge("booking", END)
 
 from langgraph.checkpoint.memory import MemorySaver
 memory = MemorySaver()

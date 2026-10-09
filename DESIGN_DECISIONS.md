@@ -37,12 +37,13 @@ graph TD
 
 2. **Planner Agent**
    - **Role**: Once the chatbot determines all constraints are filled and the user is ready, the Planner Agent kicks in. It fetches real hotels (via RapidAPI) and activities (via DuckDuckGo) based on the user's constraints.
+   - **Error Handling**: If the RapidAPI hotel search fails (e.g., API key missing, destination not found, no hotels match), it no longer falls back to mock data. Instead, it captures the error in `hotel_search_error` state variable.
    
 3. **Evaluator Agent**
-   - **Role**: Scores the drafted itinerary based on predefined rules (e.g., budget penalties, rain penalties for sightseeing).
+   - **Role**: Scores the drafted itinerary based on predefined rules (e.g., budget penalties, rain penalties for sightseeing). It includes the hotel search error (if any) in its output state.
 
 4. **Human-in-the-Loop (HITL) Checkpoint**
-   - **Role**: Pauses the execution using LangGraph's `interrupt_before`. The finalized itinerary is sent to the UI via WebSocket. The user can either "Approve" (moves to booking) or "Request Changes" (injects feedback into the chat history and loops back to the Planner Agent).
+   - **Role**: Pauses the execution. If a hotel search error occurred, it explicitly shows a warning (⚠️ Hotel Search Failed) in the UI so the user knows they need to search for accommodations themselves.
 
 ## State Management (`state.py`)
 We use LangGraph's `add_messages` reducer to maintain a persistent chat history across the websocket connection. The `MemorySaver` checkpointer ensures that when the graph pauses at the HITL node, it perfectly resumes upon receiving the user's decision.

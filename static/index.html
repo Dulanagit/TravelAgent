@@ -36,7 +36,7 @@
         <p><strong>Destination:</strong> <span id="hitl-destination"></span></p>
         <p><strong>Weather:</strong> <span id="hitl-weather"></span></p>
         <ul id="hitl-itinerary"></ul>
-        <button id="approve-btn" style="background: #28a745;">Approve & Book</button>
+        <button id="approve-btn" style="background: #28a745;">Approve</button>
         <button id="reject-init-btn" style="background: #dc3545; margin-left: 10px;">Request Changes</button>
         
         <div id="reject-form">
@@ -91,16 +91,25 @@
                     
                     const ul = document.getElementById('hitl-itinerary');
                     ul.innerHTML = '';
+                    
+                    if (state.hotel_search_error) {
+                        const li = document.createElement('li');
+                        li.style.color = '#dc3545';
+                        li.innerText = `⚠️ Hotel Search Failed: ${state.hotel_search_error}`;
+                        ul.appendChild(li);
+                    }
+                    
                     if (state.itinerary) {
                         state.itinerary.forEach(item => {
                             const li = document.createElement('li');
                             const cost = item.details?.price_per_night ? `($${item.details.price_per_night}/night)` : '';
-                            li.innerText = `${item.day} - [${item.type}] ${item.details?.name} ${cost}`;
+                            const link = item.details?.link ? ` <a href="${item.details.link}" target="_blank">[View]</a>` : '';
+                            li.innerHTML = `<strong>${item.day}</strong> - [${item.type}] ${item.details?.name} ${cost} ${link}`;
                             ul.appendChild(li);
                         });
                     }
                 } else if (data.node === 'end') {
-                    appendMessage('agent', `🎉 Bookings confirmed! Confirmation code: ${data.state.booking_confirmation}`);
+                    appendMessage('agent', `🎉 Itinerary Finalized! Have a great trip!`);
                     hitlContainer.style.display = 'none';
                     document.getElementById('input-container').style.display = 'flex';
                 }
