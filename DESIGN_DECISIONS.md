@@ -1,50 +1,51 @@
-# Travel Agent - Design Decisions
+# AI Travel Agent: Design Decisions & Architecture
 
-## 1. Pydantic Model Constraints
+This document tracks the technical decisions made while building this conversational travel agent.
 
-For the `TravelConstraints` model, I included the following fields:
+## Architecture Pattern: Conversational Agent with LangGraph
 
-- `destination` (str): The intended city or country for the trip. Essential for querying hotel APIs and flight data.
-- `start_date` (str): The beginning date of the trip. Required to check hotel availability.
-- `end_date` (str): The ending date of the trip. Combined with start date to calculate the total duration and total cost of the stay.
-- `budget` (float): The maximum amount the user is willing to spend. This is critical for the `Evaluator Agent` to filter out overly expensive options and penalize hotels that exceed the budget.
+We have moved from a rigid, static DAG (where extraction and API calls happen in a fixed sequence) to a dynamic, LLM-powered **Conversational Agentic Workflow**.
 
-**Why these constraints?**
-These four fields represent the absolute minimum information needed to plan and book a trip. Without a destination, we cannot search. Without dates, we cannot confirm availability or calculate stay length. Without a budget, we cannot filter or score accommodations appropriately for the user's financial limits.
-
-## 2. State Flow Between Nodes
-
-The `TravelState` inherits from `TypedDict` and carries the execution context through the graph:
-1. **Initial Input**: The user provides a `query` (e.g. "I want to go to Paris").
-2. **Extraction Node (`extract`)**: The system parses the query to populate the `constraints` object. If fields are missing, it appends them to the `missing_fields` list and sets `is_complete = False`.
-3. **Conditional Routing (`check_constraints`)**: 
-   - If `is_complete == False`, it routes to the **Ask Node**, which simulates prompting the user for the missing fields, then loops back to the Extraction Node.
-   - If `is_complete == True`, it routes to the **API Node**.
-4. **API Execution (`api`)**: Fetches mock hotel data based on the now-complete constraints, storing it in `mock_hotels` in the state.
-5. **Evaluator Agent (`evaluator`)**: Reads `mock_hotels` and scores them based on a combination of rating and how well the total estimated cost fits the `budget`. The top 2 are stored in `top_hotels`.
-6. **Human-in-the-Loop (`hitl`)**: Pauses to present `top_hotels` to the user. The state awaits a `user_approved` boolean.
-7. **Approval Routing (`check_approval`)**:
-   - If user rejects, the system loops back to the Extraction Node to modify constraints.
-   - If user approves, it routes to the **Booking Node**.
-8. **Booking Node (`booking`)**: Executes the mock POST request, generates a booking reference, and stores it in `booking_confirmation`, concluding the graph.
-
-## 3. Workflow Graph
+### Core Flow & Graph Nodes
 
 ```mermaid
 graph TD
-    START((Start)) --> EXTRACT[Extraction Node]
-    EXTRACT --> CHECK{Constraints Complete?}
+    START((Start)) --> CHATBOT[Information Gathering Agent]
     
-    CHECK -- No --> ASK[Ask Node: Prompt User]
-    ASK --> EXTRACT
+    CHATBOT --> |Requires Weather/Transport Info| TOOLS[Execute Tools]
+    TOOLS --> CHATBOT
     
-    CHECK -- Yes --> API[API Execution Node]
-    API --> EVAL[Evaluator Agent Node]
-    EVAL --> HITL((Human-in-the-Loop))
+    CHATBOT --> |Needs User Input| USER_INPUT((Wait for User Reply))
+    USER_INPUT --> CHATBOT
     
-    HITL --> APPROVAL{User Approval?}
-    APPROVAL -- Reject --> EXTRACT
-    APPROVAL -- Approve --> BOOK[Booking Node]
+    CHATBOT --> |All Constraints Met| PLANNER[Planner Agent]
     
-    BOOK --> END((End))
+    PLANNER --> EVALUATOR[Evaluator Agent]
+    EVALUATOR --> HITL((Human-in-the-Loop))
+    
+    HITL --> |User Requests Changes| PLANNER
+    HITL --> |User Approves| BOOKING[Booking Agent]
+    BOOKING --> END((End))
 ```
+
+### Agent Roles
+
+1. **Information Gathering Agent (Chatbot)**
+   - **Role**: Converses with the user to dynamically fill out required constraints (Destination, Dates, Budget, Companions, Vibe, Transport).
+   - **Capabilities**: Uses tools (`check_weather`, `search_transport_options`) to gather contextual information. For example, if the user mentions Colombo, it automatically checks the weather. If it's raining, it warns the user before proceeding to planning.
+   - **LLM**: Powered by Groq (`llama3-70b-8192`) using `bind_tools`.
+
+2. **Planner Agent**
+   - **Role**: Once the chatbot determines all constraints are filled and the user is ready, the Planner Agent kicks in. It fetches real hotels (via RapidAPI) and activities (via DuckDuckGo) based on the user's constraints.
+   
+3. **Evaluator Agent**
+   - **Role**: Scores the drafted itinerary based on predefined rules (e.g., budget penalties, rain penalties for sightseeing).
+
+4. **Human-in-the-Loop (HITL) Checkpoint**
+   - **Role**: Pauses the execution using LangGraph's `interrupt_before`. The finalized itinerary is sent to the UI via WebSocket. The user can either "Approve" (moves to booking) or "Request Changes" (injects feedback into the chat history and loops back to the Planner Agent).
+
+## State Management (`state.py`)
+We use LangGraph's `add_messages` reducer to maintain a persistent chat history across the websocket connection. The `MemorySaver` checkpointer ensures that when the graph pauses at the HITL node, it perfectly resumes upon receiving the user's decision.
+
+## UI/UX (WebSocket)
+The frontend (`static/index.html`) is a chat interface that streams AI responses. When the `hitl` node is reached, the chat input is hidden, and an interactive itinerary review box is displayed. 
